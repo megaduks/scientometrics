@@ -108,3 +108,19 @@ def test_gerund(verb, expected):
 def test_expand_grid_blocks_and_dedup():
     grid = [{"page_size": [10, 20], "per_page": [[3, 1]]}, {"page_size": [10], "per_page": [[3, 1]]}]
     assert len(expand_grid(grid)) == 2
+
+
+def test_gof_recovers_alpha_and_is_calibrated():
+    from citesim.gof import DiscretePowerLaw, ad_test, dpl_mle, lr_test
+
+    rng = np.random.default_rng(0)
+    model = DiscretePowerLaw(alpha=2.5, xmin=10, cap=50_000)
+    x = model.sample(5000, rng)
+    a_hat, se = dpl_mle(x, 10)
+    assert abs(a_hat - 2.5) < 3 * se
+    assert lr_test(x, 2.5, 10)["p_LR"] > 0.001
+    assert lr_test(x, 2.8, 10)["p_LR"] < 1e-6
+    # level of the Monte Carlo A-D test under H0 (loose bound: 40 replicates)
+    pvals = [ad_test(model.sample(800, rng), model, n_mc=99, seed=s)[1] for s in range(40)]
+    assert 0 <= np.mean(np.array(pvals) < 0.05) <= 0.2
+    assert ad_test(DiscretePowerLaw(2.8, 10, 50_000).sample(2000, rng), model, n_mc=99)[1] <= 0.02
