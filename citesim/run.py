@@ -28,8 +28,16 @@ DEFAULT_RAW = ROOT / "data/raw"
 DEFAULT_CACHE = ROOT / "data/processed/citesim"
 
 
-def _retrieval_dir(cache: Path, query_source: str, top_m: int, seed: int) -> Path:
-    return cache / (f"{query_source}_m{top_m}" + ("" if query_source == "titles" else f"_s{seed}"))
+def _n_papers(a) -> int:
+    if a.n_papers:
+        return a.n_papers
+    return len(np.load(Path(a.cache) / "corpus.npz")["year"])
+
+
+def _retrieval_dir(a) -> Path:
+    """One cached retrieval per (query source, top-M, number of papers, time constraint, seed)."""
+    span = "dated" if a.dated else "all"
+    return Path(a.cache) / f"{a.query_source}_m{a.top_m}_n{_n_papers(a)}_{span}_s{a.seed}"
 
 
 def cmd_prepare(a):
@@ -39,24 +47,36 @@ def cmd_prepare(a):
 
     cache = Path(a.cache)
     corpus = load_corpus(a.csv, cache)
-    print(f"corpus: {len(corpus)} papers, {corpus.internal_citations.sum()} internal citations")
+    m = len(corpus)
+    print(f"corpus: {m} papers, {corpus.internal_citations.sum()} internal citations")
     for name, counts in [("internal", corpus.internal_citations), ("n_citation", corpus.n_citation)]:
         (cache / f"empirical_{name}.json").write_text(json.dumps(distribution(counts)))
 
     title_emb = cached_embeddings(corpus.titles.tolist(), cache / "title_emb.npy", device=a.device)
-    out = _retrieval_dir(cache, a.query_source, a.top_m, a.seed)
+    out = _retrieval_dir(a)
     out.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(a.seed)
+    n = _n_papers(a)
+
+    # Every hypothetical paper borrows a real "source" paper: its number of in-corpus references
+    # (geometric mode with k=None), its year (with --dated) and, for --query-source titles, its title.
+    # With n equal to the corpus size each real paper is used exactly once.
+    src = np.arange(m) if n == m else rng.choice(m, n)
     if a.query_source == "generated":
-        queries = generate_queries(len(corpus), load_word_lists(a.raw), np.random.default_rng(a.seed))
+        queries = generate_queries(n, load_word_lists(a.raw), rng)
         (out / "queries.txt").write_text("\n".join(queries) + "\n")
         query_emb = cached_embeddings(queries, out / "query_emb.npy", device=a.device)
+        exclude = None
     else:
-        query_emb = title_emb
-    # Query i is the twin of paper i: same publication year, same number of in-corpus references.
-    np.save(out / "query_year.npy", corpus.year)
-    np.save(out / "query_k.npy", corpus.internal_refs)
-    retrieve(query_emb, corpus.year, title_emb, corpus.year, a.top_m,
-             exclude_self=a.query_source == "titles", device=a.device, out_dir=out)
+        query_emb = title_emb if n == m else title_emb[src]
+        exclude = src                                   # a paper never finds itself
+    # Without --dated every hypothetical paper is new and may cite the whole database.
+    query_year = corpus.year[src] if a.dated else np.full(n, corpus.year.max(), corpus.year.dtype)
+    np.save(out / "source_paper.npy", src)
+    np.save(out / "query_year.npy", query_year)
+    np.save(out / "query_k.npy", corpus.internal_refs[src])
+    retrieve(query_emb, query_year, title_emb, corpus.year, a.top_m,
+             exclude=exclude, device=a.device, out_dir=out)
     print("prepared", out)
 
 
@@ -93,7 +113,9 @@ def _run_one(cfg: SimConfig, retrieval: str, cache: str, runs: str) -> str:
 
 def cmd_simulate(a):
     configs = expand_grid(json.loads(Path(a.grid).read_text()))
-    rdir = _retrieval_dir(Path(a.cache), a.query_source, a.top_m, a.seed)
+    rdir = _retrieval_dir(a)
+    if not (rdir / "cand_idx.npy").exists():
+        raise SystemExit(f"{rdir} is not prepared; run `prepare` with the same global options first")
     runs = Path(a.runs or rdir / "runs")
     todo = [c for c in configs if not (runs / c.run_id / "params.json").exists()]
     print(f"{len(configs)} configs, {len(todo)} to run -> {runs}")
@@ -106,7 +128,7 @@ def cmd_simulate(a):
 def cmd_collect(a):
     import pandas as pd
 
-    rdir = _retrieval_dir(Path(a.cache), a.query_source, a.top_m, a.seed)
+    rdir = _retrieval_dir(a)
     runs = Path(a.runs or rdir / "runs")
     rows = []
     for p in sorted(runs.glob("*/params.json")):
@@ -123,7 +145,12 @@ def main(argv=None):
     ap.add_argument("--cache", default=str(DEFAULT_CACHE))
     ap.add_argument("--query-source", choices=["generated", "titles"], default="generated")
     ap.add_argument("--top-m", type=int, default=500, help="candidates kept per query")
-    ap.add_argument("--seed", type=int, default=0, help="query-generation seed")
+    ap.add_argument("--seed", type=int, default=0, help="seed for query generation and source-paper sampling")
+    ap.add_argument("--n-papers", type=int, default=None,
+                    help="number of hypothetical papers (default: one per corpus paper)")
+    ap.add_argument("--dated", action="store_true",
+                    help="restrict each paper's search to papers no newer than its source paper "
+                         "(default: search the whole database)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("prepare")
     p.add_argument("--csv", default=str(DEFAULT_CSV))

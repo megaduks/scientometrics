@@ -1,11 +1,11 @@
 """Re-rank, paginate and cite.
 
-Each hypothetical paper (one per query) takes its search results, which are already
-restricted to papers published no later than itself. It re-ranks them by a weighted score
-and splits them into pages, then cites papers from the first pages. Queries are processed in
-chronological order. In ``dynamic`` mode the citation-count feature is the number of
-citations a paper has received so far in the simulation, the count a search engine would
-show at that moment.
+Each hypothetical paper (one per query) takes its search results, re-ranks them by a weighted
+score, splits them into pages, then cites papers from the first pages. Queries are processed
+in order of their year and in random order within a year. Without a time constraint all
+queries share one year, so the order is fully random. The citation-count feature is either
+``static`` (the papers' real citation counts, as a search engine shows them today) or
+``dynamic`` (citations received so far from hypothetical papers in this run, starting at zero).
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class SimConfig:
     # in-corpus references of the paper this query stands in for.
     k: int | None = None
     decay: float = 1.0
-    citation_signal: str = "dynamic"   # "dynamic" | "static" (final empirical internal counts; circular)
+    citation_signal: str = "dynamic"   # "dynamic" (accumulated in this run) | "static" (real internal counts)
     seed: int = 0
 
     def __post_init__(self):

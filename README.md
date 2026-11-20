@@ -24,31 +24,43 @@ the target.
 Generator (`citesim/`)
 ----------------------
 
-    python -m citesim.run prepare                                   # embed + search, cached (GPU recommended)
-    python -m citesim.run simulate --grid configs/grid_default.json --workers 8
-    python -m citesim.run collect                                   # -> simulated_distributions.csv
+Global options (before the subcommand) select one cached retrieval: `--query-source generated|titles`,
+`--n-papers N` (default: one per corpus paper), `--dated`, `--top-m M` (default 500) and `--seed S`.
+Use the same options for `prepare`, `simulate` and `collect`.
+
+    python -m citesim.run [options] prepare                          # embed + search, cached (GPU recommended)
+    python -m citesim.run [options] simulate --grid configs/grid_stage1.json --workers 8
+    python -m citesim.run [options] collect                          # -> simulated_distributions.csv
     pytest tests
 
-1. **Twins.** Each real paper gets one hypothetical twin with the same publication year and the same
-   number of in-corpus references.
-2. **Queries.** Each twin gets a title-like keyword query (`--query-source generated`, the default),
-   e.g. "Optimizing Distributed Query Scheduler". The template is
-   `{verb-ing} {adjective} {noun} {agent}`, filled uniformly from the lists in `data/raw/`. With
-   `--query-source titles`, the real paper's own title is the query (and the paper itself is excluded).
+1. **Hypothetical papers.** A run writes `--n-papers` new papers, one search query each. Each borrows a
+   random real "source" paper (each real paper exactly once when N equals the corpus size). It takes the
+   source's number of in-corpus references (used by geometric mode with `k = null`) and, with
+   `--query-source titles`, its title.
+2. **Queries.** By default (`--query-source generated`) each paper gets a title-like keyword query,
+   e.g. "Optimizing Distributed Query Scheduler". The template is `{verb-ing} {adjective} {noun} {agent}`,
+   filled uniformly from the lists in `data/raw/`. With `--query-source titles`, the source paper's
+   title is the query, and the source paper itself is never retrieved.
 3. **Search.** Titles and queries are embedded with `all-MiniLM-L6-v2` (unit vectors, cosine similarity).
-   For every query, the top `--top-m` (default 500) most similar papers *published no later than the
-   twin* are retrieved by exact search.
+   Exact search returns the `--top-m` most similar papers from the **whole database**: every
+   hypothetical paper is new and may cite any existing paper. With `--dated`, the search is limited to
+   papers no newer than the source paper's year.
 4. **Ranking.** The candidates are re-ranked by
    `w_sim·similarity + w_rec·recency + w_cit·log(1+citations) + w_ven·venue_points`.
    Each feature is min-max normalised within the candidate set, so the weights are comparable.
-5. **Citing.** Twins are processed in chronological order. The results are cut into pages of
-   `page_size`, and the twin cites distinct papers without replacement:
+5. **Citing.** The results are cut into pages of `page_size`, and the paper cites distinct papers
+   without replacement:
    - `per_page = [3, 1, 1]` means 3 papers chosen at random from page 1, 1 from page 2, 1 from page 3;
-   - `per_page = null` means geometric mode: `k` papers, page p weighted `exp(-decay·p)`, where
-     `k = null` uses the twin's real reference count.
-6. **Citation signal.** With `citation_signal = "dynamic"` (default), the citation feature is the count
-   accumulated so far in the simulation: what the search engine would show at that time.
-   `"static"` ranks by the final empirical counts instead. It is circular and kept only for comparison.
+   - `per_page = null` means geometric mode: `k` papers, page p weighted `exp(-decay·p)`.
+6. **Citation signal.** `"static"` ranks by the papers' real (within-corpus) citation counts, as a
+   search engine shows them today. `"dynamic"` ranks by citations received so far from this run's
+   hypothetical papers, starting at zero. Papers are processed in random order (by year, then random,
+   with `--dated`).
+
+Grids: `configs/grid_stage1.json` is the screening grid. It has 20 weight vectors (citation weight
+0 to 0.75, recency and venue weights 0 or 0.1, similarity takes the rest) × static/dynamic × page
+size 10 × `[3, 1, 1]`, which is 40 runs per retrieval. Run it for both query sources.
+`configs/grid_default.json` is the older, broader grid.
 
 Each run writes `params.json`, `counts.npy` (citations per paper, aligned with the CSV rows) and
 `distribution.json` (`{citations: papers}`, zeros included) under

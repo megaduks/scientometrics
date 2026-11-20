@@ -30,11 +30,20 @@ def test_retrieve_most_similar_first_and_no_future_papers():
     assert list(idx[0][2:]) == [-1, -1, -1]            # padding when too few are eligible
 
 
-def test_retrieve_excludes_self():
-    idx, _ = retrieve(DOCS, YEARS, DOCS, YEARS, top_m=5, exclude_self=True, device="cpu")
+def test_retrieve_excludes_source_paper():
+    idx, _ = retrieve(DOCS, YEARS, DOCS, YEARS, top_m=5, exclude=np.arange(5), device="cpu")
     for i in range(5):
         assert i not in idx[i]
     assert np.all(idx[0] == -1)                        # the oldest paper has nothing earlier to cite
+
+
+def test_retrieve_whole_database_with_sampled_sources():
+    src = np.array([4, 4, 1])                          # titles of docs 4, 4, 1 used as queries
+    every = np.full(3, YEARS.max())                    # no time constraint
+    idx, _ = retrieve(DOCS[src], every, DOCS, YEARS, top_m=5, exclude=src, device="cpu")
+    for row, s in zip(idx, src):
+        assert s not in row and np.all(row[:4] >= 0) and row[4] == -1
+    assert idx[0, 0] == 3 and idx[2, 0] == 0             # nearest remaining neighbours first
 
 
 def _toy(n_queries=50, m=30, top_m=20, seed=1):

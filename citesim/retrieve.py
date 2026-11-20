@@ -1,7 +1,7 @@
-"""Exact top-M semantic search with a publication-time constraint.
+"""Exact top-M semantic search, optionally with a publication-time constraint.
 
-A query of year ``y`` may only retrieve papers published in year ``<= y``: nobody can
-cite a paper that does not exist yet.
+A query of year ``y`` retrieves only papers published in year ``<= y``. To search the whole
+database (a new paper citing any existing paper), give every query the maximum year.
 """
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ from tqdm import tqdm
 
 
 def retrieve(query_emb: np.ndarray, query_year: np.ndarray, doc_emb: np.ndarray, doc_year: np.ndarray,
-             top_m: int, exclude_self: bool = False, device: str | None = None, batch_size: int = 128,
+             top_m: int, exclude: np.ndarray | None = None, device: str | None = None, batch_size: int = 128,
              out_dir: str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(cand_idx, cand_sim)``, both of shape ``(n_queries, top_m)``.
 
     Row ``i`` holds query ``i``'s candidates sorted by decreasing cosine similarity.
     Slots beyond the number of eligible papers have index ``-1``.
-    ``exclude_self`` assumes query ``i`` is a twin of document ``i``, so it never retrieves itself.
+    ``exclude[i]`` is a document query ``i`` must never retrieve (``-1`` = none), e.g. the
+    paper whose title was used as the query.
     With ``out_dir`` the results are written to ``.npy`` memmaps there.
     """
     import torch
@@ -57,10 +58,13 @@ def retrieve(query_emb: np.ndarray, query_year: np.ndarray, doc_emb: np.ndarray,
             S = Q @ D[:L].T
             cols = torch.arange(L, device=device)
             S.masked_fill_(cols[None, :] >= torch.from_numpy(limit).to(device)[:, None], float("-inf"))
-            if exclude_self:
-                self_pos = sorted_pos[rows]
-                hit = np.nonzero(self_pos < L)[0]
-                S[torch.from_numpy(hit).to(device), torch.from_numpy(self_pos[hit]).to(device)] = float("-inf")
+            if exclude is not None:
+                ex = exclude[rows]
+                hit = np.nonzero(ex >= 0)[0]
+                pos_ex = sorted_pos[ex[hit]]
+                keep = pos_ex < L
+                hit, pos_ex = hit[keep], pos_ex[keep]
+                S[torch.from_numpy(hit).to(device), torch.from_numpy(pos_ex).to(device)] = float("-inf")
             k = min(top_m, L)
             vals, pos = torch.topk(S, k, dim=1)          # sorted descending
             idx = order_t[pos].to(torch.int32)
