@@ -60,6 +60,12 @@ Use the same options for `prepare`, `simulate` and `collect`.
 Grids: `configs/grid_stage1.json` is the screening grid. It has 20 weight vectors (citation weight
 0 to 0.75, recency and venue weights 0 or 0.1, similarity takes the rest) × static/dynamic × page
 size 10 × `[3, 1, 1]`, which is 40 runs per retrieval. Run it for both query sources.
+Stage 1 showed that title queries match best, with citation weight about 0.25 (dynamic) or 0.5 (static).
+`configs/grid_stage2.json` (title queries, `--top-m 500`, 232 runs) refines around that point:
+citation weight 0.2–0.35 with dynamic counts and 0.4–0.6 with static counts, × recency/venue 0 or 0.1
+× page size 10/20 × citing rules [5], [3,1,1], [2,1,1,1], [1,1,1,1,1]. It adds seeds 0–2 for the four
+best stage-1 settings. `configs/grid_stage2_pool2000.json` (28 runs) repeats the weight grid at
+[3,1,1]/10 with `--top-m 2000`, to test whether a larger result pool lengthens the extreme tail.
 `configs/grid_default.json` is the older, broader grid.
 
 Each run writes `params.json`, `counts.npy` (citations per paper, aligned with the CSV rows) and
