@@ -1,14 +1,20 @@
-# Dependencies imported by the notebooks in notebooks/
-pandas
+# citesim (the generator)
 numpy
-scikit-learn
+pandas
 tqdm
-openpyxl
-chromadb<1.0
-numpy<2.0  # chromadb 0.x breaks on numpy 2
-sentence-transformers
 torch
+sentence-transformers
+pytest
+
+# analysis
+scipy
+matplotlib
+powerlaw
+
+# data preparation notebook (scientometrics_quotes.ipynb)
+openpyxl
+
+# legacy notebook scientometrics_search_engine.ipynb only
+chromadb<1.0
 spacy
-language-tool-python
-gramformer
 dvc[s3]
